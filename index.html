@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cazador Estelar: Dificultad Progresiva y Power-Up S</title>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        body {
+            background-color: #000020; /* Fondo espacial oscuro */
+            color: #fff;
+            font-family: 'Press Start 2P', cursive;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 10px;
+            box-sizing: border-box;
+            overflow: hidden; /* Evitar scrollbars si el canvas es muy grande */
+        }
+        #gameCanvas {
+            background-color: #080818; /* Un poco más claro para el área de juego */
+            border: 2px solid #00ffff; /* Borde cian brillante */
+            box-shadow: 0 0 20px #00ffff;
+            display: block; /* Para evitar espacio extra debajo */
+            max-width: 100%;
+        }
+        .game-info {
+            display: flex;
+            justify-content: space-around; 
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 10px; 
+            margin-top: 5px;
+            width: 100%;
+            max-width: 600px; 
+        }
+        .controls {
+            display: flex;
+            justify-content: space-around;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 10px; 
+            width: 100%;
+            max-width: 600px;
+        }
+        .controls button, .game-info span {
+            background-color: #1a1a3a;
+            color: #00ffff;
+            border: 2px solid #00ffff;
+            padding: 8px 12px; 
+            margin: 3px; 
+            font-family: 'Press Start 2P', cursive;
+            font-size: 10px; 
+            cursor: pointer;
+            text-transform: uppercase;
+            border-radius: 5px;
+            box-shadow: 0 0 8px #00ffff inset;
+            transition: background-color 0.3s, box-shadow 0.3s;
+        }
+        .controls button:hover, .controls button:active {
+            background-color: #00ffff;
+            color: #1a1a3a;
+            box-shadow: 0 0 12px #00ffff;
+        }
+        .game-info span {
+            cursor: default;
+            font-size: 12px; 
+             min-width: 120px; 
+            text-align: center;
+        }
+        #messageBox {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(0, 0, 20, 0.95); 
+            color: #00ffff;
+            padding: 25px;
+            border: 3px solid #00ffff;
+            border-radius: 10px;
+            text-align: center;
+            font-size: 18px; 
+            z-index: 100;
+            display: none;
+            box-shadow: 0 0 25px #00ffff;
+            flex-direction: column;
+            align-items: center;
+            width: 80%;
+            max-width: 400px;
+        }
+        #messageBox button {
+             background-color: #00ffff;
+             color: #1a1a3a;
+             border: none;
+             padding: 10px 15px;
+             margin-top: 15px;
+             font-family: 'Press Start 2P', cursive;
+             cursor: pointer;
+             border-radius: 5px;
+             font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="game-info">
+        <span id="score">Puntaje: 0</span>
+        <span id="level">Nivel: 1</span>
+        <span id="missiles">Misiles: 3</span>
+        <span id="timer">Tiempo: 60</span>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+    <div class="controls">
+        <button id="btnIzquierda">←</button>
+        <button id="btnAdelante">↑ Prof.</button>
+        <button id="btnAtras">↓ Prof.</button>
+        <button id="btnDerecha">→</button>
+        <button id="btnDisparar">Disparar</button>
+        <button id="btnMisil">Misil (M)</button>
+    </div>
+
+    <div id="messageBox">
+        <p id="messageText"></p>
+        <button id="messageButton">OK</button>
+    </div>
+
+    <script>
+        // Constantes del Juego
+        const CANVAS_WIDTH = 600;
+        const CANVAS_HEIGHT = 400;
+        const PLAYER_WIDTH_BASE = 40;
+        const PLAYER_HEIGHT_BASE = 30;
+        const PLAYER_SPEED = 15;
+        const BULLET_SPEED = 7;
+        const ENEMY_BULLET_SPEED = 4; 
+        const MISSILE_SPEED = 5;
+        const PLAYER_SHOT_COOLDOWN_NORMAL = 300; // ms
+        const PLAYER_SHOT_COOLDOWN_RAPID = 100; // ms
+        const POWERUP_DURATION = 5000; // 5 segundos para Fuego Rápido
+        const MAX_LEVELS = 3;
+        const LEVEL_DURATION = 60; // segundos
+        const BOSS_KILL_BONUS = 1000;
+        const MISSILE_DAMAGE_TO_BOSS = 3;
+        const NORMAL_BULLET_DAMAGE_TO_BOSS = 1;
+        const ENEMY_SPAWN_INTERVAL_BASE = 2.0; // Segundos (base) para nueva aparición de enemigo
+        const MAX_ACTIVE_ENEMIES_BASE = 7;    
+        const ENEMY_SHOT_SPREAD_ANGLE = Math.PI / 4; 
+        const ENEMY_BURST_COUNT = 5; 
+        const BOSS_BURST_COUNT = 5;  
+        const PLAYER_SPREAD_SHOT_ANGLE = (20 * Math.PI) / 180; // 20 grados en radianes
+
+
+        // Variables del Juego
+        let canvas, ctx;
+        let player;
+        let bullets = [];
+        let enemyBullets = [];
+        let enemies = [];
+        let powerUps = [];
+        let currentBoss = null;
+        let score = 0;
+        let currentLevel = 1;
+        let missilesAvailable = 3;
+        let gameOver = false;
+        let gamePaused = true;
+        let lastShotTime = 0;
+        let rapidFireActive = false; // Power-up 'F'
+        let rapidFireEndTime = 0;
+        let spreadShotActive = false; // Power-up 'S' (permanente una vez obtenido)
+        let keysPressed = {};
+        let levelTimeRemaining = LEVEL_DURATION;
+        let bossActive = false;
+        let lastUpdateTime = 0;
+        let timeToNextEnemySpawn = 0; 
+
+        // Sintetizadores de Sonido
+        let playerShootSound, enemyExplosionSound, missileLaunchSound, powerUpSound, bossHitSound;
+        let soundsInitialized = false;
+
+        const laneYPositions = [CANVAS_HEIGHT - 70, CANVAS_HEIGHT - 100, CANVAS_HEIGHT - 130];
+        const laneScales = [0.8, 0.9, 1.0]; 
+
+        // --- Clases del Juego ---
+        class Player {
+            constructor() {
+                this.lane = 0; 
+                this.updateDimensions(); 
+                this.x = CANVAS_WIDTH / 2 - this.width / 2;
+                this.y = laneYPositions[this.lane];
+                this.color = '#00ff00'; 
+            }
+            
+            updateDimensions() {
+                this.width = PLAYER_WIDTH_BASE * laneScales[this.lane];
+                this.height = PLAYER_HEIGHT_BASE * laneScales[this.lane];
+                this.y = laneYPositions[this.lane] - (this.height - PLAYER_HEIGHT_BASE * laneScales[0]);
+            }
+
+            draw() {
+                ctx.fillStyle = this.color;
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width / 2, this.y);
+                ctx.lineTo(this.x, this.y + this.height);
+                ctx.lineTo(this.x + this.width, this.y + this.height);
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = '#008800'; 
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width / 2, this.y + this.height * 0.2);
+                ctx.lineTo(this.x + this.width * 0.25, this.y + this.height);
+                ctx.lineTo(this.x + this.width * 0.75, this.y + this.height);
+                ctx.closePath();
+                ctx.fill();
+            }
+
+            update() {
+                if (keysPressed['ArrowLeft'] || keysPressed['btnIzquierda']) this.x -= PLAYER_SPEED;
+                if (keysPressed['ArrowRight'] || keysPressed['btnDerecha']) this.x += PLAYER_SPEED;
+                this.x = Math.max(0, Math.min(CANVAS_WIDTH - this.width, this.x)); 
+            }
+
+            moveLane(direction) { 
+                this.lane += direction;
+                this.lane = Math.max(0, Math.min(laneYPositions.length - 1, this.lane)); 
+                this.updateDimensions(); 
+            }
+
+            shoot(isMissile = false) {
+                const currentTime = Date.now();
+                const shotCooldown = rapidFireActive ? PLAYER_SHOT_COOLDOWN_RAPID : PLAYER_SHOT_COOLDOWN_NORMAL;
+
+                if (isMissile) {
+                    if (missilesAvailable > 0) {
+                        bullets.push(new Bullet(this.x + this.width / 2 - 5, this.y, 10, 20, '#ff00ff', true)); 
+                        missilesAvailable--;
+                        if (soundsInitialized && missileLaunchSound) missileLaunchSound.triggerAttackRelease("G3", "0.3s", Tone.now());
+                        updateUI();
+                    }
+                } else {
+                    if (currentTime - lastShotTime > shotCooldown) {
+                        const bulletX = this.x + this.width / 2 - 2.5;
+                        const bulletY = this.y;
+                        
+                        if (spreadShotActive) {
+                            bullets.push(new Bullet(bulletX, bulletY, 5, 15, '#ffff00', false, 0)); // Disparo central
+                            bullets.push(new Bullet(bulletX, bulletY, 5, 15, '#ffff00', false, -PLAYER_SPREAD_SHOT_ANGLE)); // Disparo izquierdo
+                            bullets.push(new Bullet(bulletX, bulletY, 5, 15, '#ffff00', false, PLAYER_SPREAD_SHOT_ANGLE));  // Disparo derecho
+                        } else {
+                            bullets.push(new Bullet(bulletX, bulletY, 5, 15, '#ffff00')); // Disparo único
+                        }
+                        
+                        lastShotTime = currentTime;
+                        if (soundsInitialized && playerShootSound) playerShootSound.triggerAttackRelease("C5", "0.05s", Tone.now());
+                    }
+                }
+            }
+        }
+
+        class Bullet {
+            constructor(x, y, width, height, color, isHoming = false, angleOffset = 0) { // angleOffset para disparo triple
+                this.x = x; this.y = y; this.width = width; this.height = height;
+                this.color = color; this.isHoming = isHoming; this.target = null;
+                this.speed = isHoming ? MISSILE_SPEED : BULLET_SPEED;
+                
+                // Calcular componentes de velocidad si hay un ángulo
+                // El ángulo 0 es hacia arriba (negativo en Y). angleOffset es desde la vertical.
+                const baseAngle = -Math.PI / 2; // Hacia arriba
+                this.finalAngle = baseAngle + angleOffset;
+                this.dx = Math.cos(this.finalAngle) * this.speed;
+                this.dy = Math.sin(this.finalAngle) * this.speed;
+
+                if (this.isHoming) this.findTarget(); 
+            }
+
+            draw() { ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.width, this.height); }
+
+            update() {
+                if (this.isHoming && this.target && (enemies.includes(this.target) || this.target === currentBoss)) {
+                    const targetCenterX = this.target.x + (this.target.width / 2);
+                    const targetCenterY = this.target.y + (this.target.height / 2);
+                    const angleToTarget = Math.atan2(targetCenterY - this.y, targetCenterX - this.x);
+                    this.x += Math.cos(angleToTarget) * this.speed;
+                    this.y += Math.sin(angleToTarget) * this.speed;
+                } else {
+                    // Usar componentes dx, dy para balas normales (incluyendo spread shot)
+                    this.x += this.dx;
+                    this.y += this.dy; 
+                }
+            }
+
+            findTarget() {
+                let potentialTargets = [...enemies]; 
+                if (currentBoss) potentialTargets.push(currentBoss); 
+                if (potentialTargets.length === 0) return;
+                let closestTarget = null; let minDistance = Infinity;
+                potentialTargets.forEach(target => {
+                    if (!target) return; 
+                    const targetCenterX = target.x + (target.width / 2);
+                    const targetCenterY = target.y + (target.height / 2);
+                    const distance = Math.sqrt(Math.pow(targetCenterX - this.x, 2) + Math.pow(targetCenterY - this.y, 2));
+                    if (distance < minDistance) { minDistance = distance; closestTarget = target; }
+                });
+                this.target = closestTarget;
+            }
+        }
+
+        class Enemy {
+            constructor(x, y, width, height, color, speed, shoots = false, shootChance = 0.01) {
+                this.x = x; this.y = y; this.width = width; this.height = height;
+                this.color = color; this.speed = speed; this.shoots = shoots; 
+                // Aumentar shootChance basado en el nivel
+                this.shootChance = shootChance * Math.pow(1.25, currentLevel - 1); 
+            }
+            draw() {
+                ctx.fillStyle = this.color; 
+                ctx.beginPath();
+                ctx.moveTo(this.x + this.width / 2, this.y); 
+                ctx.lineTo(this.x + this.width, this.y + this.height * 0.5); 
+                ctx.lineTo(this.x + this.width * 0.8, this.y + this.height); 
+                ctx.lineTo(this.x + this.width * 0.2, this.y + this.height); 
+                ctx.lineTo(this.x, this.y + this.height * 0.5); 
+                ctx.closePath();
+                ctx.fill();
+                ctx.fillStyle = 'orange';
+                ctx.fillRect(this.x + this.width * 0.3, this.y + this.height * 0.65, this.width * 0.4, this.height * 0.35);
+                ctx.fillStyle = '#FFD700'; 
+                ctx.beginPath();
+                ctx.arc(this.x + this.width / 2, this.y + this.height * 0.3, this.width / 7, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            update() {
+                this.y += this.speed; 
+                if (this.shoots && Math.random() < this.shootChance) this.shoot();
+            }
+            shoot() { 
+                const baseAngle = Math.PI / 2; 
+                for (let i = 0; i < ENEMY_BURST_COUNT; i++) {
+                    const randomAngleOffset = (Math.random() - 0.5) * ENEMY_SHOT_SPREAD_ANGLE; 
+                    const finalAngle = baseAngle + randomAngleOffset;
+                    enemyBullets.push(new EnemyBullet(this.x + this.width / 2 - 2.5, this.y + this.height, 5, 10, '#FF8C00', finalAngle)); 
+                }
+            }
+        }
+        
+        class EnemyBullet {
+            constructor(x, y, width, height, color, angle = Math.PI / 2) { 
+                this.x = x; this.y = y; this.width = width; this.height = height; this.color = color;
+                this.speed = ENEMY_BULLET_SPEED;
+                this.dx = Math.cos(angle) * this.speed; 
+                this.dy = Math.sin(angle) * this.speed; 
+            }
+            draw() { ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.width, this.height); }
+            update() { this.x += this.dx; this.y += this.dy; } 
+        }
+
+        class PowerUp {
+            constructor(x, y, type) { // type puede ser 'rapidFire' o 'spreadShot'
+                this.x = x; this.y = y; this.type = type; this.width = 20; this.height = 20; 
+                this.color = (type === 'rapidFire') ? '#00ffff' : '#33ff33'; // Cian para F, Verde para S
+            }
+            draw() {
+                ctx.fillStyle = this.color; ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.fillStyle = '#000'; ctx.font = '15px "Press Start 2P"'; 
+                const text = (this.type === 'rapidFire') ? 'F' : 'S';
+                ctx.fillText(text, this.x + 4, this.y + 15); 
+            }
+            update() { this.y += 1; } 
+        }
+
+        class Boss {
+            constructor(level) {
+                this.level = level; this.y = 30; this.cannons = [];
+                this.lastDamageTime = 0; this.flashDuration = 100; 
+                this.dx = 1.5 + level * 0.5; 
+                this.moveDirection = (Math.random() < 0.5) ? 1 : -1; 
+                this.timeToChangeDirection = Math.random() * 1.5 + 1.0; 
+
+                switch (level) {
+                    case 1:
+                        this.width = 100; this.height = 60; this.maxHealth = 35; // Aumentada por disparo triple
+                        this.color = 'darkred'; this.baseColor = 'darkred';
+                        this.cannons.push({ x: -30, y: 50, cd: 2500, lastShot: 0, w: 10, h: 15, spread: Math.PI / 6 }); 
+                        this.cannons.push({ x: 30, y: 50, cd: 2500, lastShot: 0, w: 10, h: 15, spread: Math.PI / 6 });
+                        break;
+                    case 2:
+                        this.width = 140; this.height = 70; this.maxHealth = 55; 
+                        this.color = 'darkblue'; this.baseColor = 'darkblue';
+                        this.cannons.push({ x: -50, y: 60, cd: 2000, lastShot: 0, w: 12, h: 18, spread: Math.PI / 5 }); 
+                        this.cannons.push({ x: 0, y: 65, cd: 1800, lastShot: 0, w: 15, h: 20, spread: Math.PI / 8 });   
+                        this.cannons.push({ x: 50, y: 60, cd: 2000, lastShot: 0, w: 12, h: 18, spread: Math.PI / 5 });
+                        break;
+                    case 3:
+                        this.width = 180; this.height = 80; this.maxHealth = 80; 
+                        this.color = '#581845'; this.baseColor = '#581845'; 
+                        this.cannons.push({ x: -70, y: 70, cd: 1800, lastShot: 0, w: 10, h: 15, spread: Math.PI / 4 }); 
+                        this.cannons.push({ x: -30, y: 75, cd: 1500, lastShot: 0, w: 12, h: 18, spread: Math.PI / 6 });
+                        this.cannons.push({ x: 30, y: 75, cd: 1500, lastShot: 0, w: 12, h: 18, spread: Math.PI / 6 });
+                        this.cannons.push({ x: 70, y: 70, cd: 1800, lastShot: 0, w: 10, h: 15, spread: Math.PI / 4 });
+                        break;
+                }
+                this.health = this.maxHealth;
+                this.x = CANVAS_WIDTH / 2 - this.width / 2; 
+            }
+
+            draw() {
+                ctx.fillStyle = (Date.now() - this.lastDamageTime < this.flashDuration) ? 'white' : this.color;
+                if (this.level === 1) { 
+                    ctx.beginPath(); ctx.moveTo(this.x, this.y);
+                    ctx.lineTo(this.x + this.width, this.y);
+                    ctx.lineTo(this.x + this.width / 2, this.y + this.height);
+                    ctx.closePath(); ctx.fill();
+                } else if (this.level === 2) { 
+                    ctx.fillRect(this.x, this.y, this.width, this.height * 0.7);
+                    ctx.fillRect(this.x - 20, this.y + 10, 20, this.height * 0.5); 
+                    ctx.fillRect(this.x + this.width, this.y + 10, 20, this.height * 0.5);
+                } else { 
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    ctx.fillStyle = '#C70039'; 
+                    ctx.fillRect(this.x + this.width * 0.1, this.y + this.height * 0.1, this.width*0.8, this.height*0.2);
+                    ctx.fillRect(this.x + this.width * 0.4, this.y, this.width*0.2, this.height);
+                }
+                this.cannons.forEach(cannon => {
+                    ctx.fillStyle = 'grey';
+                    ctx.fillRect(this.x + this.width/2 + cannon.x - cannon.w/2, this.y + cannon.y - cannon.h/2, cannon.w, cannon.h);
+                });
+            }
+
+            update(deltaTime) { 
+                const currentTime = Date.now();
+                this.timeToChangeDirection -= deltaTime; 
+                if (this.timeToChangeDirection <= 0) {
+                    this.moveDirection *= -1; 
+                    this.timeToChangeDirection = Math.random() * 1.5 + 1.0; 
+                }
+                this.x += this.dx * this.moveDirection;
+                if (this.x < 0) {
+                    this.x = 0; this.moveDirection = 1; 
+                    this.timeToChangeDirection = Math.random() * 1.5 + 1.0;
+                } else if (this.x + this.width > CANVAS_WIDTH) {
+                    this.x = CANVAS_WIDTH - this.width; this.moveDirection = -1; 
+                    this.timeToChangeDirection = Math.random() * 1.5 + 1.0;
+                }
+
+                this.cannons.forEach(cannon => {
+                    if (currentTime - cannon.lastShot > cannon.cd) {
+                        const baseAngle = Math.PI / 2; 
+                        for (let i = 0; i < BOSS_BURST_COUNT; i++) {
+                            const individualShotSpread = (Math.random() - 0.5) * cannon.spread; 
+                            const shotAngle = baseAngle + individualShotSpread;
+                            enemyBullets.push(new EnemyBullet(
+                                this.x + this.width/2 + cannon.x - 2.5, 
+                                this.y + cannon.y, 5, 10, '#FF3333', shotAngle 
+                            ));
+                        }
+                        cannon.lastShot = currentTime; 
+                    }
+                });
+                if (Date.now() - this.lastDamageTime >= this.flashDuration) this.color = this.baseColor;
+            }
+
+            takeDamage(amount) {
+                this.health -= amount; this.health = Math.max(0, this.health);
+                this.lastDamageTime = Date.now(); this.color = 'white'; 
+                if (soundsInitialized && bossHitSound) bossHitSound.triggerAttackRelease("0.15s", Tone.now());
+                if (this.health <= 0) bossDefeated(); 
+            }
+        }
+
+        // --- Inicialización de Sonidos ---
+        function initializeSounds() {
+            if (soundsInitialized) return;
+            try {
+                playerShootSound = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0.01, release: 0.1 }, volume: -15 }).toDestination();
+                missileLaunchSound = new Tone.Synth({ oscillator: { type: 'sawtooth' }, envelope: { attack: 0.1, decay: 0.3, sustain: 0.1, release: 0.2 }, volume: -10 }).toDestination();
+                enemyExplosionSound = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.005, decay: 0.1, sustain: 0, release: 0.1 }, volume: -20 }).toDestination();
+                powerUpSound = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.2, sustain: 0, release: 0.1 }, volume: -12 }).toDestination();
+                bossHitSound = new Tone.NoiseSynth({ noise: { type: 'pink' }, envelope: { attack: 0.01, decay: 0.15, sustain: 0, release: 0.1 }, volume: -15 }).toDestination();
+                soundsInitialized = true;
+                console.log("Sonidos inicializados correctamente.");
+            } catch (error) {
+                console.error("Error inicializando sonidos:", error);
+            }
+        }
+
+        // --- Funciones Lógicas del Juego ---
+        function init() {
+            canvas = document.getElementById('gameCanvas'); ctx = canvas.getContext('2d');
+            canvas.width = CANVAS_WIDTH; canvas.height = CANVAS_HEIGHT;
+
+            document.addEventListener('keydown', (e) => {
+                keysPressed[e.key] = true;
+                if (e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); if (player && !gamePaused && !gameOver) player.shoot(); }
+                if (e.key === 'm' || e.key === 'M') { if (player && !gamePaused && !gameOver) player.shoot(true); }
+            });
+            document.addEventListener('keyup', (e) => { keysPressed[e.key] = false; });
+
+            ['btnIzquierda', 'btnDerecha'].forEach(id => {
+                const btn = document.getElementById(id);
+                btn.addEventListener('pointerdown', () => keysPressed[id] = true);
+                btn.addEventListener('pointerup', () => keysPressed[id] = false);
+                btn.addEventListener('pointerleave', () => keysPressed[id] = false); 
+            });
+            document.getElementById('btnAdelante').addEventListener('click', () => { if (player && !gamePaused && !gameOver) player.moveLane(1); });
+            document.getElementById('btnAtras').addEventListener('click', () => { if (player && !gamePaused && !gameOver) player.moveLane(-1); });
+            document.getElementById('btnDisparar').addEventListener('click', () => { if (player && !gamePaused && !gameOver) player.shoot(); });
+            document.getElementById('btnMisil').addEventListener('click', () => { if (player && !gamePaused && !gameOver) player.shoot(true); });
+            
+            document.getElementById('messageButton').addEventListener('click', async () => {
+                const messageBox = document.getElementById('messageBox');
+                const buttonText = document.getElementById('messageButton').textContent;
+                const messageContent = document.getElementById('messageText').innerHTML;
+                messageBox.style.display = 'none';
+
+                if (buttonText === "Iniciar Juego" || buttonText === "Reintentar") {
+                    if (Tone.context.state !== 'running') {
+                        await Tone.start();
+                        console.log("AudioContext iniciado por Tone.js");
+                    }
+                    if (!soundsInitialized) initializeSounds(); 
+                    startGame();
+                } else if (buttonText.startsWith("Iniciar Nivel")) {
+                    gamePaused = false;
+                    loadLevel(currentLevel); 
+                    lastUpdateTime = Date.now(); 
+                } else if (buttonText === "Continuar" && messageContent.includes("¡JEFE FINAL!")) {
+                    gamePaused = false; 
+                    lastUpdateTime = Date.now(); 
+                }
+            });
+
+            showMessage("Cazador Estelar", "¡Prepárate para la oleada y el JEFE!", "Iniciar Juego");
+            createStars(); 
+            lastUpdateTime = Date.now(); 
+            gameLoop(); 
+        }
+
+        function startGame() {
+            score = 0; currentLevel = 1; missilesAvailable = 3;
+            bullets = []; enemyBullets = []; enemies = []; powerUps = [];
+            currentBoss = null; bossActive = false; 
+            rapidFireActive = false; spreadShotActive = false; // Resetear power-ups
+            player = new Player(); 
+            gameOver = false; 
+            levelTimeRemaining = LEVEL_DURATION;
+            timeToNextEnemySpawn = 0; 
+            lastUpdateTime = Date.now();
+            gamePaused = false; 
+            loadLevel(currentLevel); 
+            updateUI(); 
+        }
+        
+        function loadLevel(level) {
+            enemies = []; bullets = []; enemyBullets = []; powerUps = []; 
+            missilesAvailable = 3; 
+            currentBoss = null; bossActive = false;
+            // spreadShotActive se mantiene entre niveles si ya se obtuvo
+            levelTimeRemaining = LEVEL_DURATION;
+            // Ajustar dificultad basada en el nivel
+            timeToNextEnemySpawn = (ENEMY_SPAWN_INTERVAL_BASE / Math.sqrt(currentLevel)) * 0.5; // Enemigos aparecen más rápido en niveles altos
+            
+            if(player) player.updateDimensions(); 
+            updateUI(); 
+        }
+
+        function spawnSingleEnemy() {
+            const levelFactor = currentLevel; 
+            const x = Math.random() * (CANVAS_WIDTH - 50); 
+            const y = -50; 
+            const width = 30 + Math.random() * 15;
+            const height = 20 + Math.random() * 8;
+            const color = `hsl(${Math.random() * 60 + 180}, 100%, 45%)`; 
+            const speed = (1 + levelFactor * 0.45) * (0.8 + Math.random() * 0.4) ; // Un poco más rápidos
+            const shoots = Math.random() < (0.25 * levelFactor + 0.20); // Mayor probabilidad base de disparar
+            // La frecuencia de disparo (shootChance) ya se ajusta en el constructor del enemigo
+            const baseShootChance = 0.006; // Chance base antes del multiplicador de nivel
+
+            enemies.push(new Enemy(x, y, width, height, color, speed, shoots, baseShootChance));
+        }
+        
+        function spawnBoss() {
+            if (currentBoss) return; 
+            bossActive = true;
+            currentBoss = new Boss(currentLevel);
+            enemies = []; 
+            showMessage(`Nivel ${currentLevel}`, "¡JEFE FINAL!", "Continuar");
+        }
+
+        function bossDefeated() {
+            score += BOSS_KILL_BONUS;
+            currentBoss = null; bossActive = false;
+            if (soundsInitialized && enemyExplosionSound) { 
+                enemyExplosionSound.triggerAttackRelease("0.5s", Tone.now());
+                setTimeout(() => enemyExplosionSound.triggerAttackRelease("0.4s", Tone.now() + 0.2), 200);
+            }
+            levelComplete();
+        }
+
+        function update() {
+            if (gamePaused || gameOver) return;
+
+            let now = Date.now();
+            let deltaTime = (now - lastUpdateTime) / 1000; 
+            lastUpdateTime = now;
+
+            player.update();
+
+            if (!bossActive && levelTimeRemaining > 0) {
+                levelTimeRemaining -= deltaTime;
+                timeToNextEnemySpawn -= deltaTime;
+                
+                // Máximo de enemigos ajustado por nivel
+                const maxEnemiesThisLevel = MAX_ACTIVE_ENEMIES_BASE + Math.floor(currentLevel / 2);
+
+                if (timeToNextEnemySpawn <= 0 && enemies.length < maxEnemiesThisLevel) {
+                    spawnSingleEnemy();
+                    // Intervalo de aparición disminuye con el nivel
+                    timeToNextEnemySpawn = (ENEMY_SPAWN_INTERVAL_BASE / Math.pow(1.1, currentLevel -1) ) * (0.75 + Math.random() * 0.5); 
+                }
+
+                if (levelTimeRemaining <= 0) {
+                    levelTimeRemaining = 0; 
+                    spawnBoss(); 
+                }
+            } else if (bossActive && currentBoss) {
+                currentBoss.update(deltaTime); 
+            }
+            
+            for (let i = bullets.length - 1; i >= 0; i--) {
+                const bullet = bullets[i];
+                bullet.update();
+                // Eliminar balas que salen por arriba o por los lados (para disparos en ángulo)
+                if (bullet.y + bullet.height < 0 || bullet.x < -bullet.width || bullet.x > CANVAS_WIDTH) { 
+                    bullets.splice(i, 1); continue; 
+                }
+                
+                if (bossActive && currentBoss && checkCollision(currentBoss, bullet)) {
+                    const damage = bullet.isHoming ? MISSILE_DAMAGE_TO_BOSS : NORMAL_BULLET_DAMAGE_TO_BOSS;
+                    currentBoss.takeDamage(damage); 
+                    bullets.splice(i, 1); 
+                }
+            }
+
+            for (let i = enemyBullets.length - 1; i >= 0; i--) {
+                const bullet = enemyBullets[i];
+                bullet.update();
+                if (bullet.x < -bullet.width || bullet.x > CANVAS_WIDTH || bullet.y > CANVAS_HEIGHT || bullet.y < -bullet.height) {
+                     enemyBullets.splice(i, 1); 
+                } else if (checkCollision(player, bullet)) { 
+                    triggerGameOver("¡Nave Destruida!"); break; 
+                }
+            }
+            
+            if (!bossActive) {
+                for (let i = enemies.length - 1; i >= 0; i--) {
+                    const enemy = enemies[i];
+                    if (!enemy) continue; 
+                    enemy.update();
+                    if (enemy.y > CANVAS_HEIGHT) { enemies.splice(i, 1); continue; } 
+
+                    let enemyDestroyedThisFrame = false; 
+                    for (let j = bullets.length - 1; j >= 0; j--) {
+                        const bullet = bullets[j];
+                        if (!bullets[j]) continue; 
+                        if (checkCollision(enemy, bullet)) {
+                            enemies.splice(i, 1); bullets.splice(j, 1); 
+                            score += 100;
+                            if (soundsInitialized && enemyExplosionSound) enemyExplosionSound.triggerAttackRelease("0.1s", Tone.now());
+                            // Probabilidad de soltar power-up
+                            const randPowerUp = Math.random();
+                            if (randPowerUp < 0.07) { // 7% para Fuego Rápido
+                                powerUps.push(new PowerUp(enemy.x, enemy.y, 'rapidFire')); 
+                            } else if (randPowerUp < 0.12 && !spreadShotActive) { // 5% para Disparo Triple (solo si no se tiene ya)
+                                powerUps.push(new PowerUp(enemy.x, enemy.y, 'spreadShot'));
+                            }
+                            enemyDestroyedThisFrame = true; break; 
+                        }
+                    }
+                    if (enemyDestroyedThisFrame) continue; 
+                    
+                    if (checkCollision(player, enemy)) { triggerGameOver("¡Colisión Fatal!"); break; }
+                }
+            }
+
+            for (let i = powerUps.length - 1; i >= 0; i--) {
+                const powerUp = powerUps[i];
+                powerUp.update();
+                if (powerUp.y > CANVAS_HEIGHT) { powerUps.splice(i, 1); } 
+                else if (checkCollision(player, powerUp)) { 
+                    activatePowerUp(powerUp.type);
+                    if (soundsInitialized && powerUpSound) powerUpSound.triggerAttackRelease("E5", "0.1s", Tone.now());
+                    powerUps.splice(i, 1); 
+                }
+            }
+            
+            if (rapidFireActive && Date.now() > rapidFireEndTime) rapidFireActive = false;
+            updateUI(); 
+        }
+
+        function draw() {
+            ctx.fillStyle = '#080818'; 
+            ctx.fillRect(0, 0, CANVAS_WIDTH, CANVAS_HEIGHT);
+            drawStars(); 
+
+            if (!gamePaused && !gameOver && player) { 
+                player.draw();
+                bullets.forEach(bullet => bullet.draw());
+                enemyBullets.forEach(bullet => bullet.draw());
+                if (!bossActive) enemies.forEach(enemy => enemy.draw()); 
+                powerUps.forEach(powerUp => powerUp.draw());
+
+                if (bossActive && currentBoss) {
+                    currentBoss.draw();
+                    const barWidth = CANVAS_WIDTH * 0.7; const barHeight = 15;
+                    const barX = CANVAS_WIDTH / 2 - barWidth / 2; const barY = 5; 
+                    ctx.fillStyle = '#400'; 
+                    ctx.fillRect(barX, barY, barWidth, barHeight);
+                    const healthPercentage = currentBoss.health / currentBoss.maxHealth;
+                    ctx.fillStyle = '#f00'; 
+                    ctx.fillRect(barX, barY, barWidth * healthPercentage, barHeight);
+                    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; 
+                    ctx.strokeRect(barX, barY, barWidth, barHeight); ctx.lineWidth = 1; 
+                }
+            }
+            requestAnimationFrame(gameLoop); 
+        }
+        
+        let stars = []; 
+        function createStars() {
+            stars = []; 
+            for(let i = 0; i < 100; i++) {
+                stars.push({ x: Math.random() * CANVAS_WIDTH, y: Math.random() * CANVAS_HEIGHT,
+                             radius: Math.random() * 1.5, alpha: Math.random() * 0.5 + 0.5 }); 
+            }
+        }
+        function drawStars() {
+            stars.forEach(star => {
+                ctx.beginPath(); ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(255, 255, 255, ${star.alpha})`; ctx.fill();
+                star.y += 0.2; 
+                if (star.y > CANVAS_HEIGHT) { star.y = 0; star.x = Math.random() * CANVAS_WIDTH; } 
+            });
+        }
+
+        function checkCollision(rect1, rect2) {
+            if (!rect1 || !rect2) return false; 
+            return rect1.x < rect2.x + rect2.width && rect1.x + rect1.width > rect2.x &&
+                   rect1.y < rect2.y + rect2.height && rect1.y + rect1.height > rect2.y;
+        }
+
+        function activatePowerUp(type) {
+            if (type === 'rapidFire') { 
+                rapidFireActive = true; 
+                rapidFireEndTime = Date.now() + POWERUP_DURATION; 
+            } else if (type === 'spreadShot') {
+                spreadShotActive = true; // Efecto permanente
+            }
+        }
+        
+        function levelComplete() { 
+            gamePaused = true; currentLevel++;
+            if (currentLevel > MAX_LEVELS) { 
+                triggerGameOver(`¡Victoria Total! Puntaje: ${score}`);
+            } else { 
+                showMessage(`Nivel ${currentLevel-1} Superado`, `Puntaje: ${score}`, `Iniciar Nivel ${currentLevel}`);
+            }
+        }
+
+        function triggerGameOver(message) {
+            gameOver = true; gamePaused = true; 
+            showMessage("Juego Terminado", `${message}<br>Puntaje Final: ${score}`, "Reintentar");
+        }
+
+        function updateUI() {
+            document.getElementById('score').textContent = `Puntaje: ${score}`;
+            document.getElementById('level').textContent = `Nivel: ${currentLevel}`;
+            document.getElementById('missiles').textContent = `Misiles: ${missilesAvailable}`;
+            document.getElementById('timer').textContent = `Tiempo: ${Math.max(0, Math.ceil(levelTimeRemaining))}`;
+        }
+        
+        function showMessage(title, text, buttonText) {
+            const messageBox = document.getElementById('messageBox');
+            const messageTextElement = document.getElementById('messageText'); 
+            const messageButton = document.getElementById('messageButton');
+            messageTextElement.innerHTML = `<strong>${title}</strong><br>${text}`; 
+            messageButton.textContent = buttonText;
+            messageBox.style.display = 'flex'; 
+            gamePaused = true; 
+        }
+
+        function gameLoop() { update(); draw(); } 
+        window.onload = init; 
+    </script>
+</body>
+</html>
